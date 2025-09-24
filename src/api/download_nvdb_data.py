@@ -1,9 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Mon Sep 15 14:35:58 2025
-
-@author: andryg
-"""
 
 import requests
 import time
@@ -81,29 +76,43 @@ class FeatureTypeDownloader:
         api_url = self.build_api_url()
         total_fetched = 0
         df_list = []
-        
+
+        def fetch_objects(new_url=None):
+            @api_caller(api_url=new_url)
+            def fetcher(data=None) -> dict|None:
+                return data
+            return fetcher()
+            
         while True:
-            response = requests.get(api_url, headers={"X-Client": "Andryg python"})
-            if response.status_code == 200:
-                data = response.json()
-                total_fetched += data.get('metadata', {}).get('returnert', 0)
-                df_list.append(pd.json_normalize(data.get('objekter', [])))
-                next_url = data.get('metadata', {}).get('neste', {}).get('href')
-                if next_url == api_url or not next_url:
-                    break
-                api_url = next_url
-                print(f"Total fetched: {total_fetched}")
-            else:
-                print(response.text)
-                print("Error, retrying in 5 seconds")
-                time.sleep(5)
-        
+            data = fetch_objects(api_url)
+            if not data or data.get('metadata', {}).get('returnert', 0) == 0:
+                break
+            total_fetched += data.get('metadata', {}).get('returnert', 0)
+            print(f"Total fetched: {total_fetched}")
+            
+            next_url = data.get('metadata', {}).get('neste', {}).get('href')
+            if next_url == api_url or not next_url:
+                break
+            df_list.append(pd.json_normalize(data.get('objekter', [])))
+            api_url = next_url
+            
         if df_list:
             self.objects = pd.concat(df_list, ignore_index=True)
             return True
         else:
             return False
-
+        
+    def export(self, file_name: str, file_type: str = "csv") -> None:
+        match file_type.lower():
+            case 'csv':
+                self.objects.to_csv(file_name+'.csv', index=False, sep=';')
+            case 'excel' | 'xlsx':
+                self.objects.to_excel(file_name+'.xlsx', index=False)
+            case 'txt':
+                self.objects.to_csv(file_name+'.txt', index=False, sep=';')
+            case _:
+                print("Unsupported file type. Supported types are: csv, excel/xlsx, json. Defaulting to csv.")
+                self.objects.to_csv(file_name+'.csv', index=False)
 
 def hent_vegnett(fylke_id, vref, detaljnivå, typeveg, sideanlegg, veglenketype):
     url = f"https://nvdbapiles.atlas.vegvesen.no/vegnett/api/v4/veglenkesekvenser/segmentert?fylke={fylke_id}&vegsystemreferanse={vref}&detaljniva={detaljnivå}&typeveg={typeveg}&sideanlegg={sideanlegg}&veglenketype={veglenketype}"
@@ -136,8 +145,6 @@ def hent_vegnett(fylke_id, vref, detaljnivå, typeveg, sideanlegg, veglenketype)
         return pd.DataFrame()
     
 if __name__ == "__main__":
-    instance = FeatureTypeDownloader(feature_type_id=210, miljø='prod', raw_data=False, inkluder='egenskaper')
-    instance.get_relationships_from_data_catalogue()
-    print(instance.children)
-
-    
+    instance = FeatureTypeDownloader(feature_type_id=210, environment='prod', raw_data=False, inkluder='egenskaper')
+    instance.download()
+    instance.export(file_name='vegobjekter_210', file_type='csv')
