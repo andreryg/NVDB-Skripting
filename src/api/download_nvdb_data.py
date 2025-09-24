@@ -105,46 +105,85 @@ class FeatureTypeDownloader:
     def export(self, file_name: str, file_type: str = "csv") -> None:
         match file_type.lower():
             case 'csv':
-                self.objects.to_csv(file_name+'.csv', index=False, sep=';')
+                self.objects.to_csv(file_name+'.csv', index=False, sep=';', encoding='utf-8-sig')
             case 'excel' | 'xlsx':
                 self.objects.to_excel(file_name+'.xlsx', index=False)
             case 'txt':
-                self.objects.to_csv(file_name+'.txt', index=False, sep=';')
+                self.objects.to_csv(file_name+'.txt', index=False, sep=';', encoding='utf-8-sig')
             case _:
                 print("Unsupported file type. Supported types are: csv, excel/xlsx, json. Defaulting to csv.")
-                self.objects.to_csv(file_name+'.csv', index=False)
+                self.objects.to_csv(file_name+'.csv', index=False, sep=';', encoding='utf-8-sig')
 
-def hent_vegnett(fylke_id, vref, detaljnivå, typeveg, sideanlegg, veglenketype):
-    url = f"https://nvdbapiles.atlas.vegvesen.no/vegnett/api/v4/veglenkesekvenser/segmentert?fylke={fylke_id}&vegsystemreferanse={vref}&detaljniva={detaljnivå}&typeveg={typeveg}&sideanlegg={sideanlegg}&veglenketype={veglenketype}"
-    df_list = []
-    antall = 0
-    while True:
-        r = requests.get(url, headers={"X-Client": "Andryg python"})
-        if r.status_code == 200:
-            r = r.json()
-            if len(r['objekter']) == 0:
+class RoadNetworkDownloader:
+    def __init__(self, environment: str = "prod", **api_query_parameters: str):
+        match environment:
+            case 'prod':
+                self.base_url = "https://nvdbapiles.atlas.vegvesen.no/"
+            case 'test':
+                self.base_url = "https://nvdbapiles.test.atlas.vegvesen.no/"
+            case 'stm':
+                self.base_url = "https://nvdbapiles.utv.atlas.vegvesen.no/"
+            case 'utv':
+                self.base_url = "https://nvdbapiles.utv.atlas.vegvesen.no/"
+            case _:
+                print("Invalid environment. Choose from 'prod', 'test', 'stm', or 'utv'. Defaulting to 'prod'.")
+                self.base_url = "https://nvdbapiles.atlas.vegvesen.no/"
+
+        self.road_segments = pd.DataFrame()
+        self.api_query_parameters = api_query_parameters
+
+    def build_api_url(self) -> str:
+        query_string = "&".join([f"{key}={value}" for key, value in self.api_query_parameters.items()])
+        return f"{self.base_url}vegnett/api/v4/veglenkesekvenser/segmentert?{query_string}"
+    
+    def download(self) -> bool:
+        api_url = self.build_api_url()
+        total_fetched = 0
+        df_list = []
+
+        def fetch_segments(new_url=None):
+            @api_caller(api_url=new_url)
+            def fetcher(data=None) -> dict|None:
+                return data
+            return fetcher()
+            
+        while True:
+            data = fetch_segments(api_url)
+            if not data or data.get('metadata', {}).get('returnert', 0) == 0:
                 break
-            df_list += [pd.json_normalize(r['objekter'])]
-            url = r['metadata']['neste']['href']
-            antall += r['metadata']['returnert']
-            print(f"Antall: {antall}")
+            total_fetched += data.get('metadata', {}).get('returnert', 0)
+            print(f"Total fetched: {total_fetched}")
+            
+            next_url = data.get('metadata', {}).get('neste', {}).get('href')
+            if next_url == api_url or not next_url:
+                break
+            df_list.append(pd.json_normalize(data.get('objekter', [])))
+            api_url = next_url
+            
+        if df_list:
+            self.road_segments = pd.concat(df_list, ignore_index=True)
+            self.road_segments = self.road_segments[self.road_segments['vegsystemreferanse.vegsystem.nummer'] != 99999] #Used for internal testing
+            return True
         else:
-            print(r.text)
-            print("Error, prøver på nytt om 5 sekunder")
-            time.sleep(5)
-    if df_list:
-        df = pd.concat(df_list, ignore_index=True)
-
-        df = df[df['vegsystemreferanse.vegsystem.fase'] == 'V']
-        df = df[df['vegsystemreferanse.strekning.trafikantgruppe'] != 'G']
-        df = df[['veglenkesekvensid', 'lengde']]
-        df = df.groupby('veglenkesekvensid')['lengde'].sum()
-
-        return df
-    else:
-        return pd.DataFrame()
+            return False
+        
+    def export(self, file_name: str, file_type: str = "csv") -> None:
+        match file_type.lower():
+            case 'csv':
+                self.road_segments.to_csv(file_name+'.csv', index=False, sep=';', encoding='utf-8-sig')
+            case 'excel' | 'xlsx':
+                self.road_segments.to_excel(file_name+'.xlsx', index=False)
+            case 'txt':
+                self.road_segments.to_csv(file_name+'.txt', index=False, sep=';', encoding='utf-8-sig')
+            case _:
+                print("Unsupported file type. Supported types are: csv, excel/xlsx, json. Defaulting to csv.")
+                self.road_segments.to_csv(file_name+'.csv', index=False, sep=';', encoding='utf-8-sig')
     
 if __name__ == "__main__":
-    instance = FeatureTypeDownloader(feature_type_id=210, environment='prod', raw_data=False, inkluder='egenskaper')
+    # instance = FeatureTypeDownloader(feature_type_id=210, environment='prod', raw_data=False, inkluder='egenskaper')
+    # instance.download()
+    # instance.export(file_name='vegobjekter_210', file_type='csv')
+
+    instance = RoadNetworkDownloader(environment='prod', fylke='50', vegsystemreferanse='R', tidspunkt='2006-01-01')
     instance.download()
-    instance.export(file_name='vegobjekter_210', file_type='csv')
+    instance.export(file_name='vegnett_50_R', file_type='csv')
