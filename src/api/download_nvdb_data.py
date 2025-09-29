@@ -71,7 +71,33 @@ class FeatureTypeDownloader:
             children = [str(child['innhold']['type']['id'])+'.'+child['innhold']['type']['navn'] for child in data.get('relasjonstyper', []).get('barn', [])]
             return parents, children
         self.parents, self.children = fetch_relationships()
-    
+
+    def populate_columns(self, attributes = True, relationships = True, road_reference = True) -> None:
+        def populate_attributes():
+            if not hasattr(self, 'attributes'):
+                self.get_attributes_from_data_catalogue()
+            for attr in self.attributes:
+                if attr not in self.objects.columns:
+                    attr_id = attr.split('.')[0]
+                    self.objects[attr] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('verdi') for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
+        
+        def populate_relationships():
+            if not hasattr(self, 'parents') and not hasattr(self, 'children'):
+                self.get_relationships_from_data_catalogue()
+            for rel in self.parents:
+                if rel not in self.objects.columns and 'relasjoner.foreldre' in self.objects.columns:
+                    parent_id = rel.split('.')[0]
+                    self.objects['Forelder_'+rel] = self.objects['relasjoner.foreldre'].apply(lambda parents: next((parent.get('vegobjekter') for parent in parents if str(parent.get('type').get('id')) == parent_id), None) if isinstance(parents, list) else None)
+            for rel in self.children:
+                if rel not in self.objects.columns and 'relasjoner.barn' in self.objects.columns:
+                    child_id = rel.split('.')[0]
+                    self.objects['Barn_'+rel] = self.objects['relasjoner.barn'].apply(lambda children: next((child.get('vegobjekter') for child in children if str(child.get('type').get('id')) == child_id), None) if isinstance(children, list) else None)
+
+        if attributes:
+            populate_attributes()
+        if relationships:
+            populate_relationships()
+
     def download(self) -> bool:
         api_url = self.build_api_url()
         total_fetched = 0
@@ -163,6 +189,7 @@ class RoadNetworkDownloader:
         if df_list:
             self.road_segments = pd.concat(df_list, ignore_index=True)
             self.road_segments = self.road_segments[self.road_segments['vegsystemreferanse.vegsystem.nummer'] != 99999] #Used for internal testing
+            self.road_segments = self.road_segments[self.road_segments['vegsystemreferanse.vegsystem.fase'] == 'V'] #Only drivable roads
             return True
         else:
             return False
@@ -171,7 +198,7 @@ class RoadNetworkDownloader:
         match file_type.lower():
             case 'csv':
                 self.road_segments.to_csv(file_name+'.csv', index=False, sep=';', encoding='utf-8-sig')
-            case 'excel' | 'xlsx':
+            case 'excel' | 'xlsx': #Deprecated, use csv or txt instead
                 self.road_segments.to_excel(file_name+'.xlsx', index=False)
             case 'txt':
                 self.road_segments.to_csv(file_name+'.txt', index=False, sep=';', encoding='utf-8-sig')
@@ -180,10 +207,33 @@ class RoadNetworkDownloader:
                 self.road_segments.to_csv(file_name+'.csv', index=False, sep=';', encoding='utf-8-sig')
     
 if __name__ == "__main__":
-    # instance = FeatureTypeDownloader(feature_type_id=210, environment='prod', raw_data=False, inkluder='egenskaper')
+    instance = FeatureTypeDownloader(feature_type_id=210, environment='prod', raw_data=False, inkluder='metadata,egenskaper,relasjoner')
+    instance.download()
+    instance.populate_columns(attributes=False, relationships=False, road_reference=False)
+    instance.export(file_name='vegobjekter_210_raw', file_type='csv')
+    #instance.get_relationships_from_data_catalogue()
+    #
+
     # instance.download()
     # instance.export(file_name='vegobjekter_210', file_type='csv')
+    # Basic examples for RoadNetworkDownloader:
 
-    instance = RoadNetworkDownloader(environment='prod', fylke='50', vegsystemreferanse='R', tidspunkt='2006-01-01')
-    instance.download()
-    instance.export(file_name='vegnett_50_R', file_type='csv')
+    # The class takes environment as an argument, which should be 'prod'
+    # Additionally it takes any of the parameters listed here: https://nvdbapiles.atlas.vegvesen.no/swagger-ui/index.html?urls.primaryName=Vegnett#/Vegnett/getVeglenkesegmenter
+    # To download data for a specific date, use 'tidspunkt' parameter in the format 'YYYY-MM-DD'.
+    
+    # Downloads road network for whole Norway in 2000-01-01 and exports to CSV.
+    #date = '2000-01-01'
+    #instance = RoadNetworkDownloader(environment='prod', tidspunkt=date)
+    #instance.download()
+    #instance.export(file_name=f'Road_network_{date}', file_type='csv')
+
+    # Downloads road network for Trøndelag county in 2000-01-01 and exports to Excel. You can also have multiple counties: fylke='50,34'
+    #instance = RoadNetworkDownloader(environment='prod', tidspunkt='2000-01-01', fylke='50')
+    #instance.download()
+    #instance.export(file_name='Road_network_50_2000-01-01', file_type='csv')
+
+    # Most useful parameters is probably:
+    # fylke (county), one or more county ids, 
+    # kommune (municipality), one or more municipality ids,
+    # vegsystemfereranse (road system reference), road category and number, e.g. 'EV6', 'RV3', 'FV65' etc, but can also be just the road category: 'E', 'R' or 'E,R,F'.
