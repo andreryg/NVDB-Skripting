@@ -72,7 +72,7 @@ class FeatureTypeDownloader:
             return parents, children
         self.parents, self.children = fetch_relationships()
 
-    def populate_columns(self, attributes = True, relationships = True, road_reference = True) -> None:
+    def populate_columns(self, attributes = True, geometry_quality_parameters = True, relationships = True, road_reference = True) -> None:
         def populate_attributes():
             if not hasattr(self, 'attributes'):
                 self.get_attributes_from_data_catalogue()
@@ -80,6 +80,14 @@ class FeatureTypeDownloader:
                 if attr not in self.objects.columns:
                     attr_id = attr.split('.')[0]
                     self.objects[attr] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('verdi') for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
+                    if "Geometri" in attr and geometry_quality_parameters:
+                        self.objects[attr + '.Målemetode'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('kvalitet', {}).get('målemetode', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
+                        self.objects[attr + '.Datafangstmetode'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('kvalitet', {}).get('datafangstmetode', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
+                        self.objects[attr + '.Nøyaktighet'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('kvalitet', {}).get('nøyaktighet', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
+                        self.objects[attr + '.Synbarhet'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('kvalitet', {}).get('synbarhet', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
+                        self.objects[attr + '.MålemetodeHøyde'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('kvalitet', {}).get('målemetodeHøyde', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
+                        self.objects[attr + '.DatafangstmetodeHøyde'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('kvalitet', {}).get('datafangstmetodeHøyde', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
+                        self.objects[attr + '.NøyaktighetHøyde'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('kvalitet', {}).get('nøyaktighetHøyde', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
         
         def populate_relationships():
             if not hasattr(self, 'parents') and not hasattr(self, 'children'):
@@ -207,10 +215,10 @@ class RoadNetworkDownloader:
                 self.road_segments.to_csv(file_name+'.csv', index=False, sep=';', encoding='utf-8-sig')
     
 if __name__ == "__main__":
-    instance = FeatureTypeDownloader(feature_type_id=210, environment='prod', raw_data=False, inkluder='metadata,egenskaper,relasjoner')
+    instance = FeatureTypeDownloader(feature_type_id=147, environment='prod', raw_data=False, inkluder='metadata,egenskaper,relasjoner')
     instance.download()
-    instance.populate_columns(attributes=False, relationships=False, road_reference=False)
-    instance.export(file_name='vegobjekter_210_raw', file_type='csv')
+    instance.populate_columns(attributes=True, relationships=True, road_reference=False)
+    instance.export(file_name='vegobjekter_147_raw', file_type='excel')
     #instance.get_relationships_from_data_catalogue()
     #
 

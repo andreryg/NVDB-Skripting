@@ -1,3 +1,4 @@
 *.csv
 /rust/target/
 /rust/Cargo.lock
+*.xlsx
