@@ -26,6 +26,16 @@ def api_caller(api_url):
         return wrapper
     return decorator
 
+def timing_decorator(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        print(f"Function '{func.__name__}' executed in {end_time - start_time:.2f} seconds")
+        return result
+    return wrapper
+
 class FeatureTypeDownloader:
     def __init__(self, feature_type_id: int, environment: str = "prod", raw_data: bool = False, **api_query_parameters: str):
         self.feature_type_id = feature_type_id
@@ -72,26 +82,28 @@ class FeatureTypeDownloader:
             return parents, children
         self.parents, self.children = fetch_relationships()
 
+    @timing_decorator
     def populate_columns(self, attributes = True, geometry_quality_parameters = True, relationships = True, road_reference = True) -> None:
         def populate_attributes():
             if not hasattr(self, 'attributes'):
                 self.get_attributes_from_data_catalogue()
+            old_columns = self.objects.columns.tolist()
             for attr in self.attributes:
                 if attr not in self.objects.columns:
                     attr_id = attr.split('.')[0]
                     self.objects[attr] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('verdi') for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
                     if "Geometri" in attr and geometry_quality_parameters:
-                        self.objects[attr + '.Målemetode'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('kvalitet', {}).get('målemetode', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
-                        self.objects[attr + '.Datafangstmetode'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('kvalitet', {}).get('datafangstmetode', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
-                        self.objects[attr + '.Nøyaktighet'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('kvalitet', {}).get('nøyaktighet', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
-                        self.objects[attr + '.Synbarhet'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('kvalitet', {}).get('synbarhet', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
-                        self.objects[attr + '.MålemetodeHøyde'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('kvalitet', {}).get('målemetodeHøyde', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
-                        self.objects[attr + '.DatafangstmetodeHøyde'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('kvalitet', {}).get('datafangstmetodeHøyde', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
-                        self.objects[attr + '.NøyaktighetHøyde'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('kvalitet', {}).get('nøyaktighetHøyde', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
+                        for quality_param in ['Målemetode', 'Datafangtsmetode', 'Nøyaktighet', 'Synbarhet', 'MålemetodeHøyde', 'DatafangstmetodeHøyde', 'NøyaktighetHøyde']:
+                            self.objects[attr + '.' + quality_param] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('kvalitet', {}).get(quality_param[0].lower() + quality_param[1:], None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
+                        self.objects[attr + '.Datafangstdato'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('datafangstdato', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
+                        self.objects[attr + '.Høydereferanse'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('høydereferanse', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
+            attribute_columns = [col for col in self.objects.columns if col not in old_columns]
+            return attribute_columns
         
         def populate_relationships():
             if not hasattr(self, 'parents') and not hasattr(self, 'children'):
                 self.get_relationships_from_data_catalogue()
+            old_columns = self.objects.columns.tolist()
             for rel in self.parents:
                 if rel not in self.objects.columns and 'relasjoner.foreldre' in self.objects.columns:
                     parent_id = rel.split('.')[0]
@@ -100,11 +112,81 @@ class FeatureTypeDownloader:
                 if rel not in self.objects.columns and 'relasjoner.barn' in self.objects.columns:
                     child_id = rel.split('.')[0]
                     self.objects['Barn_'+rel] = self.objects['relasjoner.barn'].apply(lambda children: next((child.get('vegobjekter') for child in children if str(child.get('type').get('id')) == child_id), None) if isinstance(children, list) else None)
+            relationship_columns = [col for col in self.objects.columns if col not in old_columns]
+            return relationship_columns
 
+        def populate_road_reference():
+            if 'lokasjon.kontraktsområder' in self.objects.columns:
+                self.objects['lokasjon.kontraktsområder'] = self.objects['lokasjon.kontraktsområder'].apply(lambda kontraktsområder: [kontraktsområde.get('navn', None) for kontraktsområde in kontraktsområder if isinstance(kontraktsområde, dict)] if isinstance(kontraktsområder, list) else None)
+
+            if 'lokasjon.vegforvaltere' in self.objects.columns:
+                self.objects['lokasjon.vegforvaltere'] = self.objects['lokasjon.vegforvaltere'].apply(lambda vegforvaltere: [vegforvalter.get('vegforvalter', None) for vegforvalter in vegforvaltere if isinstance(vegforvalter, dict)] if isinstance(vegforvaltere, list) else None)
+
+            if 'lokasjon.adresser' in self.objects.columns:
+                self.objects['Adressekoder'] = self.objects['lokasjon.adresser'].apply(lambda adresser: [adresse.get('adressekode', None) for adresse in adresser if isinstance(adresse, dict)] if isinstance(adresser, list) else None)
+                self.objects['lokasjon.adresser'] = self.objects['lokasjon.adresser'].apply(lambda adresser: [adresse.get('navn', None) for adresse in adresser if isinstance(adresse, dict)] if isinstance(adresser, list) else None)
+
+            if 'lokasjon.vegsystemreferanser' in self.objects.columns:
+                self.objects['Vegkategorier'] = self.objects['lokasjon.vegsystemreferanser'].apply(lambda vegsystemreferanser: list(set([vegsystemreferanse.get('vegsystem', {}).get('vegkategori', None) for vegsystemreferanse in vegsystemreferanser if isinstance(vegsystemreferanse, dict)])) if isinstance(vegsystemreferanser, list) else None)
+                self.objects['Vegfaser'] = self.objects['lokasjon.vegsystemreferanser'].apply(lambda vegsystemreferanser: list(set([vegsystemreferanse.get('vegsystem', {}).get('fase', None) for vegsystemreferanse in vegsystemreferanser if isinstance(vegsystemreferanse, dict)])) if isinstance(vegsystemreferanser, list) else None)
+                self.objects['Vegnumre'] = self.objects['lokasjon.vegsystemreferanser'].apply(lambda vegsystemreferanser: list(set([vegsystemreferanse.get('vegsystem', {}).get('nummer', None) for vegsystemreferanse in vegsystemreferanser if isinstance(vegsystemreferanse, dict)])) if isinstance(vegsystemreferanser, list) else None)
+                self.objects['Strekning'] = self.objects['lokasjon.vegsystemreferanser'].apply(lambda vegsystemreferanser: True if any(isinstance(vegsystemreferanse, dict) and 'strekning' in vegsystemreferanse for vegsystemreferanse in vegsystemreferanser) else False)
+                self.objects['Kryssystem'] = self.objects['lokasjon.vegsystemreferanser'].apply(lambda vegsystemreferanser: True if any(isinstance(vegsystemreferanse, dict) and 'kryssystem' in vegsystemreferanse for vegsystemreferanse in vegsystemreferanser) else False)
+                self.objects['Sideanlegg'] = self.objects['lokasjon.vegsystemreferanser'].apply(lambda vegsystemreferanser: True if any(isinstance(vegsystemreferanse, dict) and 'sideanlegg' in vegsystemreferanse for vegsystemreferanse in vegsystemreferanser) else False)
+                self.objects['Vegsystemreferanseretning'] = self.objects['lokasjon.vegsystemreferanser'].apply(lambda vegsystemreferanser: list(set([vegsystemreferanse.get('metrertLokasjon', {}).get('retning', None) for vegsystemreferanse in vegsystemreferanser if isinstance(vegsystemreferanse, dict)])) if isinstance(vegsystemreferanser, list) else None)
+                self.objects['Sideposisjoner'] = self.objects['lokasjon.vegsystemreferanser'].apply(lambda vegsystemreferanser: list(set([vegsystemreferanse.get('metrertLokasjon', {}).get('sideposisjon', None) for vegsystemreferanse in vegsystemreferanser if isinstance(vegsystemreferanse, dict)])) if isinstance(vegsystemreferanser, list) else None)
+                self.objects['lokasjon.vegsystemreferanser'] = self.objects['lokasjon.vegsystemreferanser'].apply(lambda vegsystemreferanser: [vegsystemreferanse.get('kortform', None) for vegsystemreferanse in vegsystemreferanser if isinstance(vegsystemreferanse, dict)] if isinstance(vegsystemreferanser, list) else None)
+
+            if 'lokasjon.stedfestinger' in self.objects.columns:
+                self.objects['Stedfestingstyper'] = self.objects['lokasjon.stedfestinger'].apply(lambda stedfestinger: list(set([stedfesting.get('type', None) for stedfesting in stedfestinger if isinstance(stedfesting, dict)])) if isinstance(stedfestinger, list) else None)
+                self.objects['lokasjon.stedfestinger'] = self.objects['lokasjon.stedfestinger'].apply(lambda stedfestinger: [stedfesting.get('kortform', None) for stedfesting in stedfestinger if isinstance(stedfesting, dict)] if isinstance(stedfestinger, list) else None)
+
+            if 'lokasjon.riksvegruter' in self.objects.columns:
+                self.objects['lokasjon.riksvegruter'] = self.objects['lokasjon.riksvegruter'].apply(lambda riksvegruter: [riksvegrute.get('riksvegrute', None) for riksvegrute in riksvegruter if isinstance(riksvegrute, dict)] if isinstance(riksvegruter, list) else None)
+
+        def rename_columns():
+            column_name_mapping = {
+                'id': 'nvdbId',
+                'metadata.type.id': 'VT_ID',
+                'metadata.type.navn': 'VT_Navn',
+                'metadata.versjon': 'Versjon',
+                'metadata.startdato': 'Startdato',
+                'metadata.sluttdato': 'Sluttdato',
+                'metadata.sist_modifisert': 'Sist_modifisert',
+                'lokasjon.kommuner': 'Kommuner',
+                'lokasjon.fylker': 'Fylker',
+                'lokasjon.geometri.wkt': 'Lokasjonsgeometri',
+                'lokasjon.kontraktsområder': 'Kontraktsområder',
+                'lokasjon.vegforvaltere': 'Vegforvaltere',
+                'lokasjon.adresser': 'Adresser',
+                'lokasjon.vegsystemreferanser': 'Vegsystemreferanser',
+                'lokasjon.stedfestinger': 'Stedfestinger',
+                'lokasjon.lengde': 'Stedfestingslengde',
+                'lokasjon.riksvegruter': 'Riksvegruter',
+                'geometri.wkt': 'Geometri',
+                'geometri.lengde': 'Geometrilengde',
+                'geometri.areal': 'Geometriareal',
+                'geometri.srid': 'Geometri_SRID',
+                'geometri.egengeometri': 'Har_egengeometri',
+            }
+            filtered_columns = {col: new_col for col, new_col in column_name_mapping.items() if col in self.objects.columns}
+            self.objects.rename(columns=filtered_columns, inplace=True)
+
+        ac, rc, rrc = [], [], []
         if attributes:
-            populate_attributes()
+            ac = populate_attributes()
         if relationships:
-            populate_relationships()
+            rc = populate_relationships()
+        if road_reference:
+            populate_road_reference()
+            rrc = ['Kommuner', 'Fylker', 'Vegforvaltere', 'Kontraktsområder', 'Adresser', 'Adressekoder', 
+                   'Riksvegruter', 'Vegkategorier', 'Vegfaser', 'Vegnumre', 'Vegsystemreferanser', 'Vegsystemreferanseretning', 'Sideposisjoner', 'Strekning', 'Kryssystem', 'Sideanlegg', 'Stedfestinger', 
+                   'Stedfestingstyper', 'Stedfestingslengde', 'Lokasjonsgeometri', 'Geometri', 'Geometrilengde', 'Geometriareal', 'Geometri_SRID', 'Har_egengeometri']
+        rename_columns()
+
+        print(self.objects.columns.tolist())
+        columns = [col_name for col_name in ['nvdbId', 'VT_ID', 'VT_Navn', 'Versjon', 'Startdato', 'Sluttdato', 'Sist_modifisert'] + ac + rc + rrc if col_name in self.objects.columns]
+        self.objects = self.objects[columns]
 
     def download(self) -> bool:
         api_url = self.build_api_url()
@@ -215,10 +297,10 @@ class RoadNetworkDownloader:
                 self.road_segments.to_csv(file_name+'.csv', index=False, sep=';', encoding='utf-8-sig')
     
 if __name__ == "__main__":
-    instance = FeatureTypeDownloader(feature_type_id=147, environment='prod', raw_data=False, inkluder='metadata,egenskaper,relasjoner')
+    instance = FeatureTypeDownloader(feature_type_id=39, environment='prod', raw_data=False, inkluder='metadata,egenskaper,relasjoner,lokasjon,geometri')
     instance.download()
-    instance.populate_columns(attributes=True, relationships=True, road_reference=False)
-    instance.export(file_name='vegobjekter_147_raw', file_type='excel')
+    instance.populate_columns(attributes=True, geometry_quality_parameters=True, relationships=True, road_reference=False)
+    instance.export(file_name='vegobjekter_39_raw', file_type='excel')
     #instance.get_relationships_from_data_catalogue()
     #
 
