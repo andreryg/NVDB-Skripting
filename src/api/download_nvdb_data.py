@@ -37,7 +37,7 @@ def timing_decorator(func):
     return wrapper
 
 class FeatureTypeDownloader:
-    def __init__(self, feature_type_id: int, environment: str = "prod", raw_data: bool = False, **api_query_parameters: str):
+    def __init__(self, feature_type_id: int, environment: str = "prod", **api_query_parameters: str) -> None:
         self.feature_type_id = feature_type_id
         match environment:
             case 'prod':
@@ -52,70 +52,69 @@ class FeatureTypeDownloader:
                 print("Invalid environment. Choose from 'prod', 'test', 'stm', or 'utv'. Defaulting to 'prod'.")
                 self.base_url = "https://nvdbapiles.atlas.vegvesen.no/"
         self.objects = pd.DataFrame()
-        self.raw_data = raw_data
-        self.api_query_parameters = api_query_parameters
+        self.api_query_parameters : dict = api_query_parameters
 
     def build_api_url(self) -> str:
-        query_string = "&".join([f"{key}={value}" for key, value in self.api_query_parameters.items()])
+        query_string : str = "&".join([f"{key}={value}" for key, value in self.api_query_parameters.items()])
         return f"{self.base_url}vegobjekter/{self.feature_type_id}?{query_string}"
     
     def get_attributes_from_data_catalogue(self) -> None:
-        data_catalogue_url = f"{self.base_url}datakatalog/api/v1/vegobjekttyper/{self.feature_type_id}?inkluder=egenskapstyper"
+        data_catalogue_url : str = f"{self.base_url}datakatalog/api/v1/vegobjekttyper/{self.feature_type_id}?inkluder=egenskapstyper"
 
         @api_caller(api_url=data_catalogue_url)
         def fetch_attributes(data=None) -> list:
             if not data:
                 return []
-            attributes = [str(attr['id'])+'.'+attr['navn'] for attr in data.get('egenskapstyper', []) if attr.get('id') < 100000]
+            attributes : list = [str(attr['id'])+'.'+attr['navn'] for attr in data.get('egenskapstyper', []) if attr.get('id') < 100000]
             return attributes
         self.attributes = fetch_attributes()
     
     def get_relationships_from_data_catalogue(self) -> None:
-        data_catalogue_url = f"{self.base_url}datakatalog/api/v1/vegobjekttyper/{self.feature_type_id}?inkluder=relasjonstyper"
+        data_catalogue_url : str = f"{self.base_url}datakatalog/api/v1/vegobjekttyper/{self.feature_type_id}?inkluder=relasjonstyper"
 
         @api_caller(api_url=data_catalogue_url)
         def fetch_relationships(data=None) -> tuple[list, list]:
             if not data:
                 return [], []
-            parents = [str(parent['innhold']['type']['id'])+'.'+parent['innhold']['type']['navn'] for parent in data.get('relasjonstyper', []).get('foreldre', [])]
-            children = [str(child['innhold']['type']['id'])+'.'+child['innhold']['type']['navn'] for child in data.get('relasjonstyper', []).get('barn', [])]
+            parents : list = [str(parent['innhold']['type']['id'])+'.'+parent['innhold']['type']['navn'] for parent in data.get('relasjonstyper', []).get('foreldre', [])]
+            children : list = [str(child['innhold']['type']['id'])+'.'+child['innhold']['type']['navn'] for child in data.get('relasjonstyper', []).get('barn', [])]
             return parents, children
         self.parents, self.children = fetch_relationships()
 
     @timing_decorator
-    def populate_columns(self, attributes = True, geometry_quality_parameters = True, relationships = True, road_reference = True) -> None:
-        def populate_attributes():
+    def populate_columns(self, attributes = True, geometry_attribute_quality_parameters = True, relationships = True, road_reference = True, geometry = True) -> None:
+        def populate_attributes() -> list[str]:
             if not hasattr(self, 'attributes'):
                 self.get_attributes_from_data_catalogue()
-            old_columns = self.objects.columns.tolist()
+            old_columns : list = self.objects.columns.tolist()
             for attr in self.attributes:
                 if attr not in self.objects.columns:
-                    attr_id = attr.split('.')[0]
-                    self.objects[attr] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('verdi') for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
-                    if "Geometri" in attr and geometry_quality_parameters:
+                    attr_id : str = attr.split('.')[0]
+                    self.objects['ET_' + attr] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('verdi') for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
+                    if "Geometri" in attr and geometry_attribute_quality_parameters:
                         for quality_param in ['Målemetode', 'Datafangtsmetode', 'Nøyaktighet', 'Synbarhet', 'MålemetodeHøyde', 'DatafangstmetodeHøyde', 'NøyaktighetHøyde']:
-                            self.objects[attr + '.' + quality_param] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('kvalitet', {}).get(quality_param[0].lower() + quality_param[1:], None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
-                        self.objects[attr + '.Datafangstdato'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('datafangstdato', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
-                        self.objects[attr + '.Høydereferanse'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('høydereferanse', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
+                            self.objects['ET_' + attr + '.' + quality_param] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('kvalitet', {}).get(quality_param[0].lower() + quality_param[1:], None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
+                        self.objects['ET_' + attr + '.Datafangstdato'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('datafangstdato', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
+                        self.objects['ET_' + attr + '.Høydereferanse'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('høydereferanse', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
             attribute_columns = [col for col in self.objects.columns if col not in old_columns]
             return attribute_columns
         
-        def populate_relationships():
+        def populate_relationships() -> list[str]:
             if not hasattr(self, 'parents') and not hasattr(self, 'children'):
                 self.get_relationships_from_data_catalogue()
-            old_columns = self.objects.columns.tolist()
+            old_columns : list[str] = self.objects.columns.tolist()
             for rel in self.parents:
                 if rel not in self.objects.columns and 'relasjoner.foreldre' in self.objects.columns:
-                    parent_id = rel.split('.')[0]
+                    parent_id : str = rel.split('.')[0]
                     self.objects['Forelder_'+rel] = self.objects['relasjoner.foreldre'].apply(lambda parents: next((parent.get('vegobjekter') for parent in parents if str(parent.get('type').get('id')) == parent_id), None) if isinstance(parents, list) else None)
             for rel in self.children:
                 if rel not in self.objects.columns and 'relasjoner.barn' in self.objects.columns:
-                    child_id = rel.split('.')[0]
+                    child_id : str = rel.split('.')[0]
                     self.objects['Barn_'+rel] = self.objects['relasjoner.barn'].apply(lambda children: next((child.get('vegobjekter') for child in children if str(child.get('type').get('id')) == child_id), None) if isinstance(children, list) else None)
             relationship_columns = [col for col in self.objects.columns if col not in old_columns]
             return relationship_columns
 
-        def populate_road_reference():
+        def populate_road_reference() -> None:
             if 'lokasjon.kontraktsområder' in self.objects.columns:
                 self.objects['lokasjon.kontraktsområder'] = self.objects['lokasjon.kontraktsområder'].apply(lambda kontraktsområder: [kontraktsområde.get('navn', None) for kontraktsområde in kontraktsområder if isinstance(kontraktsområde, dict)] if isinstance(kontraktsområder, list) else None)
 
@@ -144,8 +143,8 @@ class FeatureTypeDownloader:
             if 'lokasjon.riksvegruter' in self.objects.columns:
                 self.objects['lokasjon.riksvegruter'] = self.objects['lokasjon.riksvegruter'].apply(lambda riksvegruter: [riksvegrute.get('riksvegrute', None) for riksvegrute in riksvegruter if isinstance(riksvegrute, dict)] if isinstance(riksvegruter, list) else None)
 
-        def rename_columns():
-            column_name_mapping = {
+        def rename_columns() -> None:
+            column_name_mapping : dict = {
                 'id': 'nvdbId',
                 'metadata.type.id': 'VT_ID',
                 'metadata.type.navn': 'VT_Navn',
@@ -169,10 +168,10 @@ class FeatureTypeDownloader:
                 'geometri.srid': 'Geometri_SRID',
                 'geometri.egengeometri': 'Har_egengeometri',
             }
-            filtered_columns = {col: new_col for col, new_col in column_name_mapping.items() if col in self.objects.columns}
+            filtered_columns : dict = {col: new_col for col, new_col in column_name_mapping.items() if col in self.objects.columns}
             self.objects.rename(columns=filtered_columns, inplace=True)
 
-        ac, rc, rrc = [], [], []
+        ac, rc, rrc, gc = [], [], [], []
         if attributes:
             ac = populate_attributes()
         if relationships:
@@ -181,36 +180,37 @@ class FeatureTypeDownloader:
             populate_road_reference()
             rrc = ['Kommuner', 'Fylker', 'Vegforvaltere', 'Kontraktsområder', 'Adresser', 'Adressekoder', 
                    'Riksvegruter', 'Vegkategorier', 'Vegfaser', 'Vegnumre', 'Vegsystemreferanser', 'Vegsystemreferanseretning', 'Sideposisjoner', 'Strekning', 'Kryssystem', 'Sideanlegg', 'Stedfestinger', 
-                   'Stedfestingstyper', 'Stedfestingslengde', 'Lokasjonsgeometri', 'Geometri', 'Geometrilengde', 'Geometriareal', 'Geometri_SRID', 'Har_egengeometri']
+                   'Stedfestingstyper', 'Stedfestingslengde', 'Lokasjonsgeometri']
+        if geometry:
+            gc = ['Geometri', 'Geometrilengde', 'Geometriareal', 'Geometri_SRID', 'Har_egengeometri']
         rename_columns()
 
-        print(self.objects.columns.tolist())
-        columns = [col_name for col_name in ['nvdbId', 'VT_ID', 'VT_Navn', 'Versjon', 'Startdato', 'Sluttdato', 'Sist_modifisert'] + ac + rc + rrc if col_name in self.objects.columns]
-        self.objects = self.objects[columns]
+        columns : list[str] = [col_name for col_name in ['nvdbId', 'VT_ID', 'VT_Navn', 'Versjon', 'Startdato', 'Sluttdato', 'Sist_modifisert'] + ac + rc + rrc + gc if col_name in self.objects.columns]
+        self.objects : pd.DataFrame = self.objects[columns]
 
     def download(self) -> bool:
         api_url = self.build_api_url()
         total_fetched = 0
         df_list = []
 
-        def fetch_objects(new_url=None):
+        def fetch_objects(new_url=None) -> dict|None:
             @api_caller(api_url=new_url)
             def fetcher(data=None) -> dict|None:
                 return data
             return fetcher()
             
         while True:
-            data = fetch_objects(api_url)
+            data : dict|None = fetch_objects(api_url)
             if not data or data.get('metadata', {}).get('returnert', 0) == 0:
                 break
             total_fetched += data.get('metadata', {}).get('returnert', 0)
             print(f"Total fetched: {total_fetched}")
             
-            next_url = data.get('metadata', {}).get('neste', {}).get('href')
+            next_url : str = data.get('metadata', {}).get('neste', {}).get('href', "")
             if next_url == api_url or not next_url:
                 break
             df_list.append(pd.json_normalize(data.get('objekter', [])))
-            api_url = next_url
+            api_url: str = next_url
             
         if df_list:
             self.objects = pd.concat(df_list, ignore_index=True)
@@ -297,9 +297,10 @@ class RoadNetworkDownloader:
                 self.road_segments.to_csv(file_name+'.csv', index=False, sep=';', encoding='utf-8-sig')
     
 if __name__ == "__main__":
-    instance = FeatureTypeDownloader(feature_type_id=39, environment='prod', raw_data=False, inkluder='metadata,egenskaper,relasjoner,lokasjon,geometri')
+    instance = FeatureTypeDownloader(feature_type_id=39, environment='prod', inkluder='metadata,egenskaper,relasjoner,lokasjon,geometri')
+    #print(instance.build_api_url())
     instance.download()
-    instance.populate_columns(attributes=True, geometry_quality_parameters=True, relationships=True, road_reference=False)
+    instance.populate_columns(attributes=True, geometry_attribute_quality_parameters=True, relationships=True, road_reference=True, geometry=True)
     instance.export(file_name='vegobjekter_39_raw', file_type='excel')
     #instance.get_relationships_from_data_catalogue()
     #
