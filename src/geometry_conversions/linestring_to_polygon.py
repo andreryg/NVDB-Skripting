@@ -3,7 +3,7 @@ from shapely import wkt, LineString, Polygon, distance, Point, geometry
 def linestring_to_polygon(linestring: LineString, ring_threshold: float = 1.0) -> Polygon|None:
     """Converts a LineString to a Polygon.
 
-    Converts a shapely LineString to a shapely Polygon by closing the LineString
+    Converts a shapely LineString to a shapely Polygon by closing the LineString. 
     The closing is done by adding the start point to the end of the LineString if the distance between them is less than the ring_threshold.
     If the LineString is already closed, it is used as is.
     
