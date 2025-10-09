@@ -1,0 +1,14 @@
+{
+    "lukk": {
+        "vegobjekter": [
+            {
+                "lukkedato": "2020-10-10",
+                "kaskadelukking": "JA",
+                "typeId": 50,
+                "nvdbId": 12342,
+                "versjon": 1
+            }
+        ]
+    },
+    "datakatalogversjon": "2.41"
+}

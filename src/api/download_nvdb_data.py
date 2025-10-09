@@ -297,11 +297,11 @@ class RoadNetworkDownloader:
                 self.road_segments.to_csv(file_name+'.csv', index=False, sep=';', encoding='utf-8-sig')
     
 if __name__ == "__main__":
-    instance = FeatureTypeDownloader(feature_type_id=39, environment='prod', inkluder='metadata,egenskaper,relasjoner,lokasjon,geometri')
+    instance = FeatureTypeDownloader(feature_type_id=591, environment='prod', inkluder='metadata,egenskaper', alle_versjoner="true")
     #print(instance.build_api_url())
     instance.download()
-    instance.populate_columns(attributes=True, geometry_attribute_quality_parameters=True, relationships=True, road_reference=True, geometry=True)
-    instance.export(file_name='vegobjekter_39_raw', file_type='excel')
+    instance.populate_columns(attributes=True, geometry_attribute_quality_parameters=False, relationships=False, road_reference=False, geometry=False)
+    instance.export(file_name='vegobjekter_591_raw', file_type='excel')
     #instance.get_relationships_from_data_catalogue()
     #
 
