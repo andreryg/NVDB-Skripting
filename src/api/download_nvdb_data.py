@@ -92,7 +92,7 @@ class FeatureTypeDownloader:
                     attr_id : str = attr.split('.')[0]
                     self.objects['ET_' + attr] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('verdi') for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
                     if "Geometri" in attr and geometry_attribute_quality_parameters:
-                        for quality_param in ['Målemetode', 'Datafangtsmetode', 'Nøyaktighet', 'Synbarhet', 'MålemetodeHøyde', 'DatafangstmetodeHøyde', 'NøyaktighetHøyde']:
+                        for quality_param in ['Målemetode', 'Datafangstmetode', 'Nøyaktighet', 'Synbarhet', 'MålemetodeHøyde', 'DatafangstmetodeHøyde', 'NøyaktighetHøyde']:
                             self.objects['ET_' + attr + '.' + quality_param] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('kvalitet', {}).get(quality_param[0].lower() + quality_param[1:], None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
                         self.objects['ET_' + attr + '.Datafangstdato'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('datafangstdato', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
                         self.objects['ET_' + attr + '.Høydereferanse'] = self.objects['egenskaper'].apply(lambda attributes: next((attribute.get('høydereferanse', None) for attribute in attributes if str(attribute.get('id')) == attr_id), None) if isinstance(attributes, list) else None)
@@ -297,14 +297,17 @@ class RoadNetworkDownloader:
                 self.road_segments.to_csv(file_name+'.csv', index=False, sep=';', encoding='utf-8-sig')
     
 if __name__ == "__main__":
-    instance = FeatureTypeDownloader(feature_type_id=591, environment='prod', inkluder='metadata,egenskaper', alle_versjoner="true")
+    instance = FeatureTypeDownloader(feature_type_id=487, environment='prod', inkluder='alle', alle_versjoner="false")
     #print(instance.build_api_url())
     instance.download()
-    instance.populate_columns(attributes=True, geometry_attribute_quality_parameters=False, relationships=False, road_reference=False, geometry=False)
-    instance.export(file_name='vegobjekter_591_raw', file_type='excel')
+    instance.populate_columns(attributes=True, geometry_attribute_quality_parameters=True, relationships=True, road_reference=True, geometry=True)
+    instance.export(file_name='vegobjekter_487_fullstendig_20251109', file_type='excel')
     #instance.get_relationships_from_data_catalogue()
     #
-
+    """instance = RoadNetworkDownloader('prod', vegsystemreferanse="K,P,S", veglenketype="Hoved,Detaljert", detaljniva="VT,VTKB")
+    instance.download()
+    #instance.export(file_name=f'Road_network_KPS', file_type='excel')
+    instance.export(file_name=f'Road_network_KPS', file_type='csv')"""
     # instance.download()
     # instance.export(file_name='vegobjekter_210', file_type='csv')
     # Basic examples for RoadNetworkDownloader:
