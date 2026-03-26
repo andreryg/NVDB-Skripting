@@ -1,11 +1,11 @@
-from shapely import wkt, LineString, Polygon, distance, Point, geometry
+from shapely import wkt, LineString, Polygon, distance, Point, geometry, force_2d, has_z
 
-def linestring_to_polygon(linestring: LineString, ring_threshold: float = 1.0) -> Polygon|None:
+def linestring_to_polygon(linestring: LineString, method : str = 'closed_line', threshold: float = 1.0, z_independence = True) -> Polygon|None:
     """Converts a LineString to a Polygon.
 
-    Converts a shapely LineString to a shapely Polygon by closing the LineString. 
-    The closing is done by adding the start point to the end of the LineString if the distance between them is less than the ring_threshold.
-    If the LineString is already closed, it is used as is.
+    Converts a Shapely LineString to a Shapely Polygon using the specified method:
+    -  closed_line: Closing of line is done by adding the start point to the end of the LineString if the distance between them is less than the threshold. (Default)
+    -  buffer: Create a buffer around the LineString to form a Polygon.
     
     Parameters
     ----------
@@ -13,6 +13,8 @@ def linestring_to_polygon(linestring: LineString, ring_threshold: float = 1.0) -
         The input LineString geometry.
     ring_threshold : float, default=1.0
         The maximum distance between the start and end points to consider the LineString as closable.
+    z_independence : Boolean, default=True
+        Should the z-coordinate be counted when determining if the start and end points are the same.
 
     Returns
     -------
@@ -21,6 +23,7 @@ def linestring_to_polygon(linestring: LineString, ring_threshold: float = 1.0) -
     None
         If the LineString cannot be closed or converted to a Polygon.
     """
+
     def linestring_validation(linestring: LineString) -> bool:
         # A valid Polygon requires at least 4 points (including the closing point).
         if len(linestring.coords) < 4:
@@ -30,22 +33,50 @@ def linestring_to_polygon(linestring: LineString, ring_threshold: float = 1.0) -
             return False
         return True
 
-    coords = list(linestring.coords)
-    if linestring.coords[0] != linestring.coords[-1]:
-        if distance(Point(linestring.coords[0]), Point(linestring.coords[-1])) > ring_threshold:
-            print("The LineString cannot be closed, the endpoints are too far apart.")
-            return None # Cannot close the LineString
-        coords.append(coords[0])
-    closed_linestring = LineString(coords)
-    if not linestring_validation(closed_linestring):
-        print("The LineString is not valid for conversion to Polygon.")
-        return None
-    polygon = Polygon(list(closed_linestring.coords))
+    def closed_line(linestring: LineString) -> Polygon|None:
+        coords = list(linestring.coords)
+        start_point = coords[0]
+        end_point = coords[-1]
+        start_z, end_z = 1, 1
+        if z_independence and len(start_point) == 3 and len(end_point) == 3: # type: ignore
+            start_z, end_z = start_point[2], end_point[2]
+            start_point, end_point = start_point[0:2], end_point[0:2]
+        if start_point != end_point:
+            if distance(Point(start_point), Point(end_point)) > threshold:
+                print("The LineString cannot be closed, the endpoints are too far apart.")
+                return None # Cannot close the LineString
+            elif distance(Point(start_point), Point(end_point)) <= 0.011:
+                coords = coords[:-1]
+                coords.append(coords[0])
+            else:
+                coords.append(coords[0])
+        elif start_z != end_z:
+            coords = coords[:-1]
+            coords.append(coords[0])
+        closed_linestring = LineString(coords)
+        if not linestring_validation(closed_linestring):
+            print("The LineString is not valid for conversion to Polygon.")
+            return None
+        return Polygon(list(closed_linestring.coords))
+
+    def buffer(linestring: LineString) -> Polygon|None:
+        # Create a small buffer around the LineString to form a Polygon
+        buffered = linestring.buffer(threshold, resolution=8, cap_style='flat')
+        if not isinstance(buffered, Polygon):
+            print("Buffering did not result in a valid Polygon.")
+            return None
+        return buffered
+
+    method_functions = {
+        'closed_line': closed_line,
+        'buffer': buffer
+    }
+    polygon = method_functions[method](linestring)
     return polygon
 
 if __name__ == "__main__":
-    linje = "LINESTRING Z (56765.102 6457032.938 4.86,56763.365 6457032.507 4.97,56763.49 6457032.224 5.01,56763.661 6457031.877 4.97,56763.846 6457031.478 4.87,56768.383 6457033.599 4.89,56768.273 6457033.951 4.98,56768.088 6457034.35 5,56767.901 6457034.739 4.95,56767.693 6457035.119 4.83,56765.802 6457032.938 4.86)"
+    linje = "POLYGON Z ((266661.72 7037302.14 266661.86, 266661.89 7037302.22 164.19, 266661.88 7037302.42 164.21, 266661.72 7037302.14 266661.86))"
     ls = wkt.loads(linje)
     if not isinstance(ls, LineString):
         raise TypeError("Input must be a LineString geometry.")
-    print(linestring_to_polygon(ls, ring_threshold=1.0))
+    print(linestring_to_polygon(ls))

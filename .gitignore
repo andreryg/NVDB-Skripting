@@ -4,3 +4,4 @@
 *.xlsx
 /src/arb_*
 *.pyc
+*.txt

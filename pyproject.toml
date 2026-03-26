@@ -8,6 +8,7 @@ dependencies = [
     "bs4>=0.0.2",
     "geopandas>=1.1.1",
     "lxml>=6.0.2",
+    "matplotlib>=3.10.7",
     "maturin>=1.9.4",
     "networkx>=3.5",
     "openpyxl>=3.1.5",

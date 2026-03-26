@@ -5,14 +5,17 @@ import time
 import pandas as pd
 from functools import wraps
 
-def api_caller(api_url):
+def api_caller(api_url, X_Client, bearer=None):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
             MAX_RETRIES = 3
             retries = 0
             while retries < MAX_RETRIES:
-                response = requests.get(api_url, headers={"X-Client": "Andryg python"})
+                headers = {"X-Client": X_Client}
+                if bearer:
+                    headers["Authorization"] = bearer
+                response = requests.get(api_url, headers=headers)
                 if response.status_code == 200:
                     data = response.json()
                     return func(data)
@@ -36,8 +39,37 @@ def timing_decorator(func):
         return result
     return wrapper
 
+def login(username : str, password : str, miljø : str, X_Client: str = "Andryg python") -> str|bool:
+        match miljø:
+            case 'test':
+                base_url = "https://nvdbapiles.test.atlas.vegvesen.no/"
+            case 'stm':
+                base_url = "https://nvdbapiles-stm.utv.atlas.vegvesen.no/"
+            case 'utv':
+                base_url = "https://nvdbapiles.utv.atlas.vegvesen.no/"
+            case _:
+                base_url = "https://nvdbapiles.atlas.vegvesen.no/"
+
+        url = f"{base_url}auth/api/v1/auth/autentiser"
+        payload = {
+            "brukernavn": username,
+            "passord": password,
+            "brukertype": "ANSATT"
+            }
+        headers = {
+            "Content-Type": "application/json",
+            "X-Client": X_Client,
+            "accept": "application/json"
+            }
+        response = requests.post(url, json=payload, headers=headers)
+        if response.status_code == 200:
+            respons = response.json()
+            id_token = respons.get("id_token")
+            return f"Bearer {id_token}"
+        return False
+
 class FeatureTypeDownloader:
-    def __init__(self, feature_type_id: int, environment: str = "prod", **api_query_parameters: str) -> None:
+    def __init__(self, feature_type_id: int, environment: str = "prod", bearer: str|None = None, X_Client: str = "Andryg python", **api_query_parameters: str, ) -> None:
         self.feature_type_id = feature_type_id
         match environment:
             case 'prod':
@@ -51,17 +83,20 @@ class FeatureTypeDownloader:
             case _:
                 print("Invalid environment. Choose from 'prod', 'test', 'stm', or 'utv'. Defaulting to 'prod'.")
                 self.base_url = "https://nvdbapiles.atlas.vegvesen.no/"
+        self.X_Client = X_Client
         self.objects = pd.DataFrame()
         self.api_query_parameters : dict = api_query_parameters
+        self.bearer = bearer
 
     def build_api_url(self) -> str:
         query_string : str = "&".join([f"{key}={value}" for key, value in self.api_query_parameters.items()])
+        print(f"{self.base_url}vegobjekter/{self.feature_type_id}?{query_string}")
         return f"{self.base_url}vegobjekter/{self.feature_type_id}?{query_string}"
     
     def get_attributes_from_data_catalogue(self) -> None:
         data_catalogue_url : str = f"{self.base_url}datakatalog/api/v1/vegobjekttyper/{self.feature_type_id}?inkluder=egenskapstyper"
 
-        @api_caller(api_url=data_catalogue_url)
+        @api_caller(api_url=data_catalogue_url, X_Client=self.X_Client, bearer=self.bearer)
         def fetch_attributes(data=None) -> list:
             if not data:
                 return []
@@ -72,12 +107,12 @@ class FeatureTypeDownloader:
     def get_relationships_from_data_catalogue(self) -> None:
         data_catalogue_url : str = f"{self.base_url}datakatalog/api/v1/vegobjekttyper/{self.feature_type_id}?inkluder=relasjonstyper"
 
-        @api_caller(api_url=data_catalogue_url)
+        @api_caller(api_url=data_catalogue_url, X_Client=self.X_Client, bearer=self.bearer)
         def fetch_relationships(data=None) -> tuple[list, list]:
             if not data:
                 return [], []
-            parents : list = [str(parent['innhold']['type']['id'])+'.'+parent['innhold']['type']['navn'] for parent in data.get('relasjonstyper', []).get('foreldre', [])]
-            children : list = [str(child['innhold']['type']['id'])+'.'+child['innhold']['type']['navn'] for child in data.get('relasjonstyper', []).get('barn', [])]
+            parents : list = [str(parent['innhold']['type']['id'])+'.'+parent['innhold']['type']['navn'] if 'innhold' in parent else str(parent['type']['id'])+'.'+parent['type']['navn'] for parent in data.get('relasjonstyper', []).get('foreldre', [])]
+            children : list = [str(child['innhold']['type']['id'])+'.'+child['innhold']['type']['navn'] if 'innhold' in child else str(child['type']['id'])+'.'+child['type']['navn'] for child in data.get('relasjonstyper', []).get('barn', [])]
             return parents, children
         self.parents, self.children = fetch_relationships()
 
@@ -194,7 +229,7 @@ class FeatureTypeDownloader:
         df_list = []
 
         def fetch_objects(new_url=None) -> dict|None:
-            @api_caller(api_url=new_url)
+            @api_caller(api_url=new_url, X_Client=self.X_Client, bearer=self.bearer)
             def fetcher(data=None) -> dict|None:
                 return data
             return fetcher()
@@ -231,7 +266,7 @@ class FeatureTypeDownloader:
                 self.objects.to_csv(file_name+'.csv', index=False, sep=';', encoding='utf-8-sig')
 
 class RoadNetworkDownloader:
-    def __init__(self, environment: str = "prod", **api_query_parameters: str):
+    def __init__(self, environment: str = "prod", X_Client: str = "Andryg python", **api_query_parameters: str):
         match environment:
             case 'prod':
                 self.base_url = "https://nvdbapiles.atlas.vegvesen.no/"
@@ -247,6 +282,8 @@ class RoadNetworkDownloader:
 
         self.road_segments = pd.DataFrame()
         self.api_query_parameters = api_query_parameters
+        self.X_Client = X_Client
+        self.bearer = None
 
     def build_api_url(self) -> str:
         query_string = "&".join([f"{key}={value}" for key, value in self.api_query_parameters.items()])
@@ -258,7 +295,7 @@ class RoadNetworkDownloader:
         df_list = []
 
         def fetch_segments(new_url=None):
-            @api_caller(api_url=new_url)
+            @api_caller(api_url=new_url, X_Client=self.X_Client, bearer=self.bearer)
             def fetcher(data=None) -> dict|None:
                 return data
             return fetcher()
@@ -297,11 +334,11 @@ class RoadNetworkDownloader:
                 self.road_segments.to_csv(file_name+'.csv', index=False, sep=';', encoding='utf-8-sig')
     
 if __name__ == "__main__":
-    instance = FeatureTypeDownloader(feature_type_id=487, environment='prod', inkluder='alle', alle_versjoner="false")
+    instance = FeatureTypeDownloader(feature_type_id=629, environment='prod', inkluder='alle', alle_versjoner="true")
     #print(instance.build_api_url())
     instance.download()
     instance.populate_columns(attributes=True, geometry_attribute_quality_parameters=True, relationships=True, road_reference=True, geometry=True)
-    instance.export(file_name='vegobjekter_487_fullstendig_20251109', file_type='excel')
+    instance.export(file_name='vegobjekter_629_20260203', file_type='excel')
     #instance.get_relationships_from_data_catalogue()
     #
     """instance = RoadNetworkDownloader('prod', vegsystemreferanse="K,P,S", veglenketype="Hoved,Detaljert", detaljniva="VT,VTKB")
